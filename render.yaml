@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: gedeon-renderer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # 512MB RAM — suffisant pour Chromium headless
+    region: frankfurt      # proche de la France
+    healthCheckPath: /health
+    envVars:
+      - key: RENDERER_API_KEY
+        generateValue: true   # Render génère une clé aléatoire automatiquement
