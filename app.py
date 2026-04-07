@@ -3,11 +3,11 @@ GEDEON Renderer — Service de rendu Playwright pour GEDEON
 Expose un endpoint HTTP que Claude peut appeler via web_fetch.
 
 Endpoints:
-  GET  /render?url=<url>&wait=<ms>&selector=<css>
+  GET  /render?url=<url>&wait=<ms>&selector=<css>&intercept=true
   GET  /health
   GET  /
 
-Auth: X-API-Key header
+Auth: X-API-Key header ou ?key= query param
 """
 
 import os
@@ -19,10 +19,10 @@ from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright
 
 # ── Config ──────────────────────────────────────────────────────────────────
-API_KEY = os.environ.get("RENDERER_API_KEY", "Gedeon2026Liza")
-DEFAULT_WAIT_MS = 2000        # délai par défaut après chargement JS
-MAX_WAIT_MS = 15000           # plafond de sécurité
-DEFAULT_TIMEOUT_MS = 60000    # timeout navigation
+API_KEY = os.environ.get("RENDERER_API_KEY", "Gedeon_2026_Liza")
+DEFAULT_WAIT_MS = 2000
+MAX_WAIT_MS = 15000
+DEFAULT_TIMEOUT_MS = 30000
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -35,8 +35,7 @@ def require_api_key(f):
     def decorated(*args, **kwargs):
         key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
         if not API_KEY:
-            # Pas de clé configurée = mode dev non sécurisé
-            logger.warning("RENDERER_API_KEY non définie — auth désactivée")
+            logger.warning("RENDERER_API_KEY non definie — auth desactivee")
         elif key != API_KEY:
             return jsonify({"error": "Unauthorized"}), 401
         return f(*args, **kwargs)
@@ -44,7 +43,7 @@ def require_api_key(f):
 
 
 # ── Rendu Playwright ─────────────────────────────────────────────────────────
-async def render_page(url: str, wait_ms: int, selector: str | None) -> dict:
+async def render_page(url, wait_ms, selector, intercept=False):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
@@ -55,7 +54,7 @@ async def render_page(url: str, wait_ms: int, selector: str | None) -> dict:
                 "--disable-gpu",
                 "--no-first-run",
                 "--no-zygote",
-                "--single-process",   # nécessaire sur Render free tier
+                "--single-process",
             ],
         )
         context = await browser.new_context(
@@ -68,30 +67,42 @@ async def render_page(url: str, wait_ms: int, selector: str | None) -> dict:
         )
         page = await context.new_page()
 
+        api_calls = []
+        if intercept:
+            async def handle_request(req):
+                if req.resource_type in ("xhr", "fetch"):
+                    api_calls.append({
+                        "url": req.url,
+                        "method": req.method,
+                        "type": req.resource_type,
+                    })
+            page.on("request", handle_request)
+
         try:
             await page.goto(url, timeout=DEFAULT_TIMEOUT_MS, wait_until="domcontentloaded")
 
-            # Attendre le sélecteur si fourni
             if selector:
                 try:
                     await page.wait_for_selector(selector, timeout=wait_ms)
                 except Exception:
-                    logger.warning(f"Sélecteur '{selector}' non trouvé dans {wait_ms}ms")
+                    logger.warning(f"Selecteur '{selector}' non trouve dans {wait_ms}ms")
             else:
-                # Attente fixe pour laisser le JS s'exécuter
                 await page.wait_for_timeout(wait_ms)
 
             html = await page.content()
             title = await page.title()
             final_url = page.url
 
-            return {
+            result = {
                 "success": True,
                 "url": final_url,
                 "title": title,
                 "html": html,
                 "html_length": len(html),
             }
+            if intercept:
+                result["api_calls"] = api_calls
+            return result
 
         except Exception as e:
             logger.error(f"Erreur rendu {url}: {e}")
@@ -106,15 +117,13 @@ async def render_page(url: str, wait_ms: int, selector: str | None) -> dict:
 def index():
     return jsonify({
         "service": "GEDEON Renderer",
-        "version": "1.0.0",
-        "endpoints": {
-            "GET /render": "Rendu Playwright d'une URL",
-            "GET /health": "Healthcheck",
-        },
+        "version": "1.1.0",
         "params": {
-            "url": "URL à rendre (obligatoire)",
-            "wait": f"Délai JS en ms (défaut: {DEFAULT_WAIT_MS}, max: {MAX_WAIT_MS})",
-            "selector": "Sélecteur CSS à attendre avant de récupérer le HTML (optionnel)",
+            "url": "URL a rendre (obligatoire)",
+            "wait": f"Delai JS en ms (defaut: {DEFAULT_WAIT_MS}, max: {MAX_WAIT_MS})",
+            "selector": "Selecteur CSS a attendre (optionnel)",
+            "intercept": "true = capturer les requetes XHR/fetch (optionnel)",
+            "preview": "Taille max HTML renvoye en caracteres (defaut: 50000)",
         },
     })
 
@@ -129,25 +138,23 @@ def health():
 def render():
     url = request.args.get("url", "").strip()
     if not url:
-        return jsonify({"error": "Paramètre 'url' requis"}), 400
+        return jsonify({"error": "Parametre 'url' requis"}), 400
     if not url.startswith(("http://", "https://")):
-        return jsonify({"error": "URL invalide — doit commencer par http:// ou https://"}), 400
+        return jsonify({"error": "URL invalide"}), 400
 
     wait_ms = min(int(request.args.get("wait", DEFAULT_WAIT_MS)), MAX_WAIT_MS)
     selector = request.args.get("selector", None)
+    intercept = request.args.get("intercept", "false").lower() == "true"
 
-    logger.info(f"Rendu: {url} (wait={wait_ms}ms, selector={selector})")
+    logger.info(f"Rendu: {url} (wait={wait_ms}ms, intercept={intercept})")
 
-    result = asyncio.run(render_page(url, wait_ms, selector))
+    result = asyncio.run(render_page(url, wait_ms, selector, intercept))
 
     if not result["success"]:
         return jsonify(result), 502
 
-    # On ne renvoie pas le HTML brut dans le JSON pour éviter les gros payloads
-    # Claude reçoit les métadonnées + les N premiers caractères
     preview_size = int(request.args.get("preview", 50000))
     html = result.pop("html")
-
     result["html_preview"] = html[:preview_size]
     result["truncated"] = len(html) > preview_size
 
