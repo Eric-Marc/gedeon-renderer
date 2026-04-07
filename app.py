@@ -22,7 +22,7 @@ from playwright.async_api import async_playwright
 API_KEY = os.environ.get("RENDERER_API_KEY", "Gedeon2026Liza")
 DEFAULT_WAIT_MS = 2000        # délai par défaut après chargement JS
 MAX_WAIT_MS = 15000           # plafond de sécurité
-DEFAULT_TIMEOUT_MS = 30000    # timeout navigation
+DEFAULT_TIMEOUT_MS = 60000    # timeout navigation
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
