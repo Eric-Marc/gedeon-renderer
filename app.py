@@ -19,7 +19,7 @@ from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright
 
 # ── Config ──────────────────────────────────────────────────────────────────
-API_KEY = os.environ.get("RENDERER_API_KEY", "")
+API_KEY = "Gedeon_2026_Liza!!!"#os.environ.get("RENDERER_API_KEY", "")
 DEFAULT_WAIT_MS = 2000        # délai par défaut après chargement JS
 MAX_WAIT_MS = 15000           # plafond de sécurité
 DEFAULT_TIMEOUT_MS = 30000    # timeout navigation
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        key = request.headers.get("X-API-Key", "")
+        key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
         if not API_KEY:
             # Pas de clé configurée = mode dev non sécurisé
             logger.warning("RENDERER_API_KEY non définie — auth désactivée")
