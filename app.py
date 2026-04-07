@@ -19,7 +19,7 @@ from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright
 
 # ── Config ──────────────────────────────────────────────────────────────────
-API_KEY = os.environ.get("RENDERER_API_KEY", "Gedeon_2026_Liza")
+API_KEY = os.environ.get("RENDERER_API_KEY", "Gedeon2026Liza")
 DEFAULT_WAIT_MS = 2000
 MAX_WAIT_MS = 15000
 DEFAULT_TIMEOUT_MS = 30000
@@ -165,3 +165,55 @@ def render():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port)
+
+
+# ── Proxy fetch avec headers custom ─────────────────────────────────────────
+import json
+import urllib.request
+
+@app.route("/fetch")
+@require_api_key
+def proxy_fetch():
+    """
+    Fait un GET/POST HTTP avec headers custom vers une URL cible.
+    Params:
+      url     : URL cible (obligatoire)
+      method  : GET ou POST (defaut: GET)
+      headers : JSON string des headers (optionnel)
+      body    : body pour POST (optionnel)
+    """
+    target_url = request.args.get("url", "").strip()
+    if not target_url:
+        return jsonify({"error": "Parametre 'url' requis"}), 400
+
+    method = request.args.get("method", "GET").upper()
+    headers_raw = request.args.get("headers", "{}")
+    body_raw = request.args.get("body", None)
+
+    try:
+        headers = json.loads(headers_raw)
+    except Exception:
+        headers = {}
+
+    try:
+        req = urllib.request.Request(target_url, method=method)
+        for k, v in headers.items():
+            req.add_header(k, v)
+
+        if body_raw and method == "POST":
+            req.data = body_raw.encode("utf-8")
+            if "Content-Type" not in headers:
+                req.add_header("Content-Type", "application/json")
+
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+            return jsonify({
+                "success": True,
+                "status": resp.status,
+                "url": target_url,
+                "content": content[:50000],
+                "truncated": len(content) > 50000,
+            })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 502
